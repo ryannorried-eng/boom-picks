@@ -149,6 +149,9 @@ class ClosingLine(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime)
     market_close_consensus: Mapped[float | None] = mapped_column(Float, nullable=True)
     closing_line_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("odds_snapshots.id"), nullable=True)
+    close_book_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    close_book_implied_prob: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_market_consensus_prob: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Settlement(Base):
@@ -159,8 +162,9 @@ class Settlement(Base):
     settled_at: Mapped[datetime] = mapped_column(DateTime)
     pnl: Mapped[float] = mapped_column(Float)
     roi: Mapped[float] = mapped_column(Float)
-    clv_market: Mapped[float] = mapped_column(Float)
-    clv_book: Mapped[float] = mapped_column(Float)
+    clv_market: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clv_book: Mapped[float | None] = mapped_column(Float, nullable=True)
+    settlement_source: Mapped[str] = mapped_column(String(20), default="simulated")
 
 
 class PipelineRun(Base):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +37,11 @@ async def pick_by_id(pick_id: int, db: AsyncSession = Depends(get_db)) -> PickOu
 
 
 @router.get('/metrics/clv')
-async def clv_metrics(db: AsyncSession = Depends(get_db)) -> dict:
-    settlements = (await db.scalars(select(Settlement))).all()
+async def clv_metrics(include_simulated: bool = Query(False), db: AsyncSession = Depends(get_db)) -> dict:
+    stmt = select(Settlement)
+    if not include_simulated:
+        stmt = stmt.where(Settlement.settlement_source == 'official')
+    settlements = (await db.scalars(stmt)).all()
     if not settlements:
         return {"aggregate_clv_market": 0.0, "aggregate_clv_book": 0.0, "count": 0}
     return {

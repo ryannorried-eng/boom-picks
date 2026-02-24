@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 class MockOddsProvider:
     async def fetch_events_and_odds(self) -> list[dict]:
-        start = datetime.utcnow() + timedelta(hours=2)
+        start = datetime.utcnow() + timedelta(minutes=5)
         return [
             {
                 "source": "mock",
