@@ -24,7 +24,7 @@ async def test_deterministic_alias_mapping(session) -> None:
     await session.flush()
 
     await normalize_event(session, norm, raw.home_team, raw.away_team)
-    assert norm.mapping_confidence == 0.99
+    assert norm.mapping_confidence == 1.0
     assert norm.quarantine_reason is None
     assert norm.home_team_id == lakers.id
 
@@ -40,4 +40,4 @@ async def test_quarantine_on_unknown_team(session) -> None:
     session.add(norm)
     await session.flush()
     await normalize_event(session, norm, raw.home_team, raw.away_team)
-    assert norm.quarantine_reason == 'low_mapping_confidence'
+    assert norm.quarantine_reason == 'NO_ALIAS_MATCH'

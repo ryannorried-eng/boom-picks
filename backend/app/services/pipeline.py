@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import statistics
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from backend.app.models.all_models import (
     ClosingLine,
     EventNormalized,
     EventRaw,
+    EventStatus,
     FeatureSnapshot,
     League,
     MarketConsensus,
@@ -54,6 +55,18 @@ async def seed_reference_data(session: AsyncSession) -> None:
     await session.commit()
 
 
+def _select_closing_snapshot(valid_lines: list[dict], pick: Pick, event_start_time: datetime) -> dict | None:
+    window_start = event_start_time - timedelta(minutes=settings.close_capture_window_minutes)
+    candidates = [
+        line
+        for line in valid_lines
+        if line["book"] == pick.book and line["side"] == pick.side and window_start <= line["timestamp"] <= event_start_time
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda row: row["timestamp"])
+
+
 async def run_once(session: AsyncSession, provider) -> dict:
     started = datetime.utcnow()
     await seed_reference_data(session)
@@ -80,7 +93,7 @@ async def run_once(session: AsyncSession, provider) -> dict:
         valid_lines = []
         for line in event["odds"]:
             age = (datetime.utcnow() - line["timestamp"]).total_seconds()
-            stale = age > settings.stale_snapshot_seconds
+            stale = age > settings.stale_snapshot_max_age_seconds
             snap = OddsSnapshot(
                 event_raw_id=raw.id,
                 event_normalized_id=norm.id,
@@ -94,12 +107,19 @@ async def run_once(session: AsyncSession, provider) -> dict:
             session.add(snap)
             await session.flush()
             if not stale:
-                valid_lines.append({**line, "snapshot_id": snap.id})
+                valid_lines.append({**line, "snapshot_id": snap.id, "is_stale": stale})
 
         if norm.mapping_confidence < settings.mapping_confidence_threshold or not valid_lines:
             continue
 
-        consensus = build_market_consensus(valid_lines)
+        consensus_decision = build_market_consensus(valid_lines)
+        if consensus_decision.result is None:
+            norm.status = EventStatus.quarantined
+            norm.quarantine_reason = consensus_decision.missing_reason
+            quarantine_count += 1
+            continue
+
+        consensus = consensus_decision.result
         session.add(MarketConsensus(event_normalized_id=norm.id, market="moneyline", consensus_prob=consensus.home_prob, consensus_price=1 / consensus.home_prob, timestamp=datetime.utcnow()))
 
         feature_json = build_pregame_features(norm.id, datetime.utcnow())
@@ -140,32 +160,52 @@ async def run_once(session: AsyncSession, provider) -> dict:
             )
             session.add(pick)
             await session.flush()
-            closing = ClosingLine(
-                pick_id=pick.id,
-                close_price=-102,
-                close_implied_prob=american_to_implied_prob(-102),
-                captured_at=datetime.utcnow(),
-                market_close_consensus=consensus.home_prob + 0.01,
-                closing_line_snapshot_id=pick.odds_snapshot_id,
+
+            close_pick_book = _select_closing_snapshot(valid_lines, pick, event["start_time"])
+            close_market_consensus_prob = None
+            close_market = build_market_consensus(
+                [line for line in valid_lines if (event["start_time"] - timedelta(minutes=settings.close_capture_window_minutes)) <= line["timestamp"] <= event["start_time"]],
+                min_books=settings.consensus_min_books,
             )
-            session.add(closing)
-            settlement = Settlement(
-                pick_id=pick.id,
-                result="W",
-                settled_at=datetime.utcnow(),
-                pnl=dec - 1,
-                roi=ev_percent(model_prob, dec),
-                clv_market=closing.close_implied_prob - pick.market_consensus_prob,
-                clv_book=closing.close_implied_prob - pick.implied_prob,
-            )
-            session.add(settlement)
+            if close_market.result:
+                close_market_consensus_prob = close_market.result.home_prob
+
+            if close_pick_book:
+                close_book_implied_prob = american_to_implied_prob(close_pick_book["price"])
+                closing = ClosingLine(
+                    pick_id=pick.id,
+                    close_price=close_pick_book["price"],
+                    close_implied_prob=close_book_implied_prob,
+                    captured_at=close_pick_book["timestamp"],
+                    market_close_consensus=close_market_consensus_prob,
+                    closing_line_snapshot_id=close_pick_book["snapshot_id"],
+                    close_book_price=close_pick_book["price"],
+                    close_book_implied_prob=close_book_implied_prob,
+                    close_market_consensus_prob=close_market_consensus_prob,
+                )
+                session.add(closing)
+                clv_book = close_book_implied_prob - pick.implied_prob
+                clv_market = None
+                if close_market_consensus_prob is not None:
+                    clv_market = close_market_consensus_prob - pick.implied_prob
+                settlement = Settlement(
+                    pick_id=pick.id,
+                    result="W",
+                    settled_at=datetime.utcnow(),
+                    pnl=dec - 1,
+                    roi=ev_percent(model_prob, dec),
+                    clv_market=clv_market,
+                    clv_book=clv_book,
+                    settlement_source="simulated",
+                )
+                session.add(settlement)
 
         latencies.append((datetime.utcnow() - started).total_seconds())
 
-    total_picks = await session.scalar(select(func.count(Pick.id))) or 0
-    close_lines = await session.scalar(select(func.count(ClosingLine.id))) or 0
+    total_picks = await session.scalar(select(func.count()).select_from(Pick)) or 0
+    close_lines = await session.scalar(select(func.count()).select_from(ClosingLine)) or 0
     close_cov = (close_lines / total_picks) if total_picks else 0.0
-    total_norm = await session.scalar(select(func.count(EventNormalized.id))) or 1
+    total_norm = await session.scalar(select(func.count()).select_from(EventNormalized)) or 1
 
     run = PipelineRun(
         started_at=started,
