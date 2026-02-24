@@ -4,15 +4,20 @@ FastAPI + Postgres foundation for an autonomous sports betting analytics pipelin
 
 ## Run locally
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-## Migrations
+## Rebuild clean (after migration changes)
 ```bash
-alembic -c backend/alembic.ini upgrade head
+docker compose down -v && docker compose up -d --build
+```
+
+## Migrations (inside container)
+```bash
+docker compose exec backend bash -lc "cd backend && alembic upgrade head"
 ```
 
 ## Tests
 ```bash
-pytest -q
+docker compose exec backend pytest -q
 ```
