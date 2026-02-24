@@ -2,11 +2,11 @@ from sqlalchemy import func, select
 
 from backend.app.models.all_models import ClosingLine, MarketConsensus, Pick, Settlement
 from backend.app.services.pipeline import run_once
-from backend.app.services.provider import MockOddsProvider
+from backend.app.services.provider import DeterministicMockOddsProvider
 
 
 async def test_end_to_end_pipeline(session) -> None:
-    await run_once(session, MockOddsProvider())
+    await run_once(session, DeterministicMockOddsProvider())
     picks = await session.scalar(select(func.count()).select_from(Pick))
     consensus = await session.scalar(select(func.count()).select_from(MarketConsensus))
     close = await session.scalar(select(func.count()).select_from(ClosingLine))

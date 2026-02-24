@@ -1,11 +1,11 @@
 from backend.app.models.all_models import Pick
 from backend.app.services.pipeline import run_once
-from backend.app.services.provider import MockOddsProvider
+from backend.app.services.provider import DeterministicMockOddsProvider
 from sqlalchemy import select
 
 
 async def test_pick_lifecycle_linkage(session) -> None:
-    await run_once(session, MockOddsProvider())
+    await run_once(session, DeterministicMockOddsProvider())
     pick = await session.scalar(select(Pick).limit(1))
     assert pick is not None
     assert pick.pick_lifecycle_id
